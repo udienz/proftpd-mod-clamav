@@ -1,0 +1,5 @@
+proftpd-mod-clamav (0.10-1) unstable; urgency=low
+
+  * Initial release (Closes: #618431).
+
+ -- Mahyuddin Susanto <udienz@ubuntu.com>  Tue, 15 Mar 2011 10:44:21 +0700
