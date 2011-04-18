@@ -2,20 +2,22 @@
 # -*- makefile -*-
 
 export DH_VERBOSE=1
-VERSION=$(shell grep PROFTPD_VERSION_TEXT /usr/include/proftpd/version.h|cut -d\" -f2)
 MODULE_NAME=mod_clamav
 DEBNAME=proftpd-mod-clamav
-
-debian/control: debian/control.in
-	sed -e 's/@VERSION@/$(VERSION)/' $< >$@
 
 %:
 	dh $@
 
-override_dh_auto_configure: debian/control
-	
 override_dh_auto_build:
 	DESTDIR=$(CURDIR)/debian/$(DEBNAME) prxs -c $(MODULE_NAME).c
-	
+        
 override_dh_auto_install:
 	DESTDIR=$(CURDIR)/debian/$(DEBNAME) prxs -i -c $(MODULE_NAME).c
+
+override_dh_gencontrol:
+	cat /usr/share/proftpd/proftpd-substvars >> $(CURDIR)/debian/$(DEBNAME).substvars
+	dh_gencontrol
+
+override_dh_autoclean:
+	DESTDIR=$(CURDIR)/debian/$(DEBNAME) prxs -d $(MODULE_NAME).c
+
