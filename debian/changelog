@@ -1,5 +1,9 @@
 proftpd-mod-clamav (0.10-1) unstable; urgency=low
 
+  [ Mahyuddin Susanto ]
   * Initial release (Closes: #618431).
 
- -- Mahyuddin Susanto <udienz@ubuntu.com>  Tue, 15 Mar 2011 10:44:21 +0700
+  [ Francesco Paolo Lovergine ]
+  * Added a patch `cleanup' to avoid patching proftpd mod_core. Thanks TJ.
+
+ -- Francesco Paolo Lovergine <frankie@debian.org>  Wed, 12 Oct 2011 15:32:41 +0200
