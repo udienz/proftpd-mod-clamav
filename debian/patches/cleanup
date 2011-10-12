@@ -1,0 +1,390 @@
+Index: proftpd-mod-clamav/mod_clamav.c
+===================================================================
+--- proftpd-mod-clamav.orig/mod_clamav.c	2011-04-20 17:38:03.000000000 +0200
++++ proftpd-mod-clamav/mod_clamav.c	2011-10-12 15:30:48.000000000 +0200
+@@ -29,12 +29,12 @@
+ #include "conf.h"
+ #include "privs.h"
+ #include <libgen.h>
+-#include "mod_clamav.h"
+ 
+ /**
+  * Module version and declaration
+  */
+ #define MOD_CLAMAV_VERSION "mod_clamav/0.10"
++
+ module clamav_module;
+ 
+ /**
+@@ -50,11 +50,13 @@
+  * Local declarations
+  */
+ static unsigned long parse_nbytes(char *nbytes_str, char *units_str);
++static int clamavd_connect(void);
++static int clamavd_scan(int, const char *, const char *);
+ 
+ /**
+  * Read the returned information from Clamavd.
+  */
+-int clamavd_result(int sockd, const char *abs_filename, const char *rel_filename) {
++static int clamavd_result(int sockd, const char *abs_filename, const char *rel_filename) {
+ 	int infected = 0, waserror = 0, ret;
+ 	char buff[4096], *pt, *pt1;
+ 	FILE *fd = 0;
+@@ -65,15 +67,26 @@
+ 				errno);
+ 		return -1;
+ 	}
+-	
+-	if (fgets(buff, sizeof(buff), fd)) {
++
++	memset(buff, '\0', sizeof(buff));
++	if (fgets(buff, sizeof(buff)-1, fd)) {
+ 		if (strstr(buff, "FOUND\n")) {
+ 			++infected;
+-			
+-			pt = strrchr(buff, ':');
+-			if (pt)
+-				*pt = 0;
+-			
++		
++			/* Advance past the <id> portion of the response,
++			 * and the path name, and the colon and space that
++			 * follow the path name.
++			 */	
++			pt = strchr(buff, ':');
++			pt++;
++			pt += strlen(abs_filename);
++			pt += 3;
++
++			pt1 = strchr(pt, '(');
++			if (pt1 != NULL) {
++				*pt1 = '\0';
++			}
++
+ 			/* Delete the infected upload */
+ 			if ((ret=pr_fsio_unlink(rel_filename))!=0) {
+ 				pr_log_pri(PR_LOG_ERR, 
+@@ -81,20 +94,14 @@
+ 						errno, strerror(errno));
+ 			}
+ 			
+-			/* clean up the response */
+-			pt += 2;
+-			pt1 = strstr(pt, " FOUND");
+-			if (pt1) {
+-				*pt1 = 0;
+-			}
+-			
+ 			/* Inform the client the file contained a virus */
+ 			pr_response_add_err(R_550, "Virus Detected and Removed: %s", pt);
+ 			
+ 			/* Log the fact */
+ 			pr_log_pri(PR_LOG_ERR, 
+ 					MOD_CLAMAV_VERSION ": Virus '%s' found in '%s'", pt, abs_filename);
+-		} else if (strstr(buff, "ERROR\n")) {
++		} else if (strstr(buff, "ERROR\n") != NULL ||
++			   strstr(buff, "UNKNOWN COMMAND") != NULL) {
+ 			pr_log_pri(PR_LOG_ERR, MOD_CLAMAV_VERSION ": Clamd Error: %s", buff);
+ 			waserror = 1;
+ 		}
+@@ -106,8 +113,8 @@
+ /**
+  * Start a session with Clamavd.
+  */
+-int clamavd_session_start(int sockd) {
+-	if (sockd != -1 && write(sockd, "SESSION\n", 8) <= 0) {
++static int clamavd_session_start(int sockd) {
++	if (sockd != -1 && write(sockd, "nIDSESSION\n", 11) <= 0) {
+ 		pr_log_pri(PR_LOG_ERR, 
+ 				MOD_CLAMAV_VERSION ": error: Clamd didn't accept the session request.");
+ 		return -1;
+@@ -118,8 +125,8 @@
+ /**
+  * End session.
+  */
+-int clamavd_session_stop(int sockd) {
+-	if (sockd != -1 && write(sockd, "END\n", 4) <= 0) {
++static int clamavd_session_stop(int sockd) {
++	if (sockd != -1 && write(sockd, "nEND\n", 5) <= 0) {
+ 		pr_log_pri(PR_LOG_INFO, 
+ 				MOD_CLAMAV_VERSION ": info: Clamd didn't accept the session end request.");
+ 		return -1;
+@@ -130,7 +137,7 @@
+ /**
+  * Test the connection with Clamd.
+  */
+-int clamavd_connect_check(int sockd) {
++static int clamavd_connect_check(int sockd) {
+ 	FILE *fd = NULL;
+ 	char buff[32];
+ 
+@@ -138,8 +145,8 @@
+ 		return 0;
+ 	
+ 	if (write(sockd, "PING\n", 5) <= 0) {
+-		pr_log_debug(DEBUG4, "Clamd did not accept PING (%d): %s", 
+-				errno, strerror(errno));
++		pr_log_debug(DEBUG4, MOD_CLAMAV_VERSION
++			": Clamd did not accept PING (%d): %s", errno, strerror(errno));
+ 		close(sockd);
+ 		clamd_sockd = -1;
+ 		clam_errno = errno;
+@@ -147,7 +154,7 @@
+ 	}
+ 			
+ 	if ((fd = fdopen(dup(sockd), "r")) == NULL) {
+-		pr_log_debug(DEBUG4, "Clamd can not open descriptor for reading (%d): %s", 
++		pr_log_debug(DEBUG4, MOD_CLAMAV_VERSION ": Clamd can not open descriptor for reading (%d): %s", 
+ 				errno, strerror(errno));
+ 		close(sockd);
+ 		clamd_sockd = -1;
+@@ -160,10 +167,10 @@
+ 			fclose(fd);
+ 			return 1;
+ 		}
+-		pr_log_debug(DEBUG4, "Clamd return unknown response to PING: '%s'", buff);
++		pr_log_debug(DEBUG4, MOD_CLAMAV_VERSION ": Clamd return unknown response to PING: '%s'", buff);
+ 	}
+ 	
+-	pr_log_debug(DEBUG4, "Clamd did not respond to fgets (%d): %s", errno, strerror(errno));
++	pr_log_debug(DEBUG4, MOD_CLAMAV_VERSION ": Clamd did not respond to fgets (%d): %s", errno, strerror(errno));
+ 	fclose(fd);
+ 	close(sockd);
+ 	clamd_sockd = -1;
+@@ -174,7 +181,7 @@
+ /**
+  * Request Clamavd to perform a scan.
+  */
+-int clamavd_scan(int sockd, const char *abs_filename, const char *rel_filename) {
++static int clamavd_scan(int sockd, const char *abs_filename, const char *rel_filename) {
+ 	char *scancmd = NULL;
+ 
+ 	scancmd = calloc(strlen(abs_filename) + 20, sizeof(char));
+@@ -183,22 +190,24 @@
+ 		return -1;
+ 	}
+ 	
+-	sprintf(scancmd, "SCAN %s\n", abs_filename);
++	sprintf(scancmd, "nSCAN %s\n", abs_filename);
+ 	
+ 	if (!clamavd_connect_check(sockd)) {
+ 		if ((clamd_sockd = clamavd_connect()) < 0) {
+ 			pr_log_pri(PR_LOG_ERR, 
+ 					MOD_CLAMAV_VERSION ": error: Cannot re-connect to Clamd (%d): %s", 
+ 					errno, strerror(errno));
++			free(scancmd);
++			scancmd = NULL;
+ 			clam_errno = errno;
+ 			return -1;
+ 		}
+ 		clamavd_session_start(clamd_sockd);
+ 		sockd = clamd_sockd;
+-		pr_log_debug(DEBUG4, "Successfully reconnected to Clamd.");
++		pr_log_debug(DEBUG4, MOD_CLAMAV_VERSION ": Successfully reconnected to Clamd");
+ 		clam_errno = 0;
+ 	}
+-	
++
+ 	if (write(sockd, scancmd, strlen(scancmd)) <= 0) {
+ 		pr_log_pri(PR_LOG_ERR, 
+ 				MOD_CLAMAV_VERSION ": error: Cannot write to the Clamd socket: %d", errno);
+@@ -216,7 +225,7 @@
+ /**
+  * Connect a socket to ClamAVd.
+  */
+-int clamavd_connect(void) {
++static int clamavd_connect(void) {
+ 	struct sockaddr_un server;
+ 	struct sockaddr_in server2;
+ 	struct hostent *he;
+@@ -314,61 +323,60 @@
+ 	return sockd;
+ } 
+ 
+-/**
+- * Entry point of mod_xfer during an upload
+- */
+-int clamav_scan(cmd_rec *cmd) {
+-	char absolutepath[4096];
+-	char *file, *rel_file;
++static int clamav_fsio_close(pr_fh_t *fh, int fd) {
++	char *abs_path, *rel_path;
+ 	struct stat st;
++	int do_scan = FALSE;
+ 	config_rec *c = NULL;
+ 	unsigned long *minsize, *maxsize;	
+-	
++
++	/* We're only interested in STOR, APPE, and maybe STOU commands. */
++	if (session.curr_cmd) {
++	  if (strcmp(session.curr_cmd, C_STOR) == 0 ||
++ 	      strcmp(session.curr_cmd, C_APPE) == 0 ||
++	      strcmp(session.curr_cmd, C_STOU) == 0) {
++		do_scan = TRUE;
++	  }
++	}
++
++	if (!do_scan) {
++		return close(fd);
++	}
++
++	/* Make sure the data is written to disk, so that the fstat(2) picks
++	 * up the size properly.
++	 */
++	if (fsync(fd) < 0) {
++		return -1;
++	}
++
++	pr_fs_clear_cache();
++	if (pr_fsio_fstat(fh, &st) < 0) {
++		return -1;
++	}
++
++	if (close(fd) < 0) {
++		return -1;
++	}
++
+ 	c = find_config(CURRENT_CONF, CONF_PARAM, "ClamAV", FALSE);
+ 	if (!c || !*(int*)(c->argv[0]))
+ 		return 0;
+-	
++
+ 	/**
+ 	 * Figure out the absolute path of our directory
+ 	 */
+-	if (session.xfer.path && session.xfer.path_hidden) {
+ 		
+-		/* Hidden Store Condition */
+-		if (session.chroot_path) {
+-			sstrncpy(absolutepath, 
+-					pdircat(cmd->tmp_pool, session.chroot_path, session.xfer.path_hidden, NULL), 
+-					sizeof(absolutepath) - 1);
+-			pr_log_debug(DEBUG4, "session.chroot_path is '%s'.", session.chroot_path);
+-		} else {
+-			sstrncpy(absolutepath, session.xfer.path_hidden, sizeof(absolutepath) - 1);
+-		}
+-		file = absolutepath;
+-		rel_file = session.xfer.path_hidden;
+-		
+-		pr_log_debug(DEBUG4, "session.xfer.path_hidden is '%s'.", session.xfer.path_hidden);
+-	} else if (session.xfer.path) {
+-		
+-		/* Default Condition */
+-		if (session.chroot_path) {
+-			sstrncpy(absolutepath, pdircat(cmd->tmp_pool, session.chroot_path, session.xfer.path, NULL), 
+-					sizeof(absolutepath) - 1);
+-			pr_log_debug(DEBUG4, "session.chroot_path is '%s'.", session.chroot_path);
+-		} else {
+-			sstrncpy(absolutepath, session.xfer.path, sizeof(absolutepath) - 1);
+-		}
+-		file = absolutepath;
+-		rel_file = session.xfer.path;
+-		
+-		pr_log_debug(DEBUG4, "session.xfer.path is '%s'.", session.xfer.path);
++	if (session.chroot_path) {
++		abs_path = pdircat(fh->fh_pool, session.chroot_path, fh->fh_path, NULL);
+ 	} else {
+-		
+-		/* Error! */
+-		pr_log_pri(PR_LOG_ERR, 
+-				MOD_CLAMAV_VERSION ": error: 'session.xfer.path' does not contain a valid filename.");
+-		pr_response_add_err(R_500, "'session.xfer.path' does not contain a valid filename.");
+-		return 1;
++		abs_path = pstrdup(fh->fh_pool, fh->fh_path);
+ 	}
+-	
++
++	rel_path = pstrdup(fh->fh_pool, fh->fh_path);
++		
++	pr_log_debug(DEBUG4, MOD_CLAMAV_VERSION ": absolute path is '%s', relative path is '%s'", abs_path, rel_path);
++
+ 	/**
+ 	 * Handle min/max settings
+ 	 */
+@@ -384,18 +392,19 @@
+ 	
+ 	if (clamd_minsize > 0 || clamd_maxsize > 0) {
+ 		/* Stat the file to acquire the size */
+-		if (pr_fsio_stat(rel_file, &st) == -1) {
++		pr_fs_clear_cache();
++		if (pr_fsio_fstat(fh, &st) == -1) {
+ 			pr_log_pri(PR_LOG_ERR, MOD_CLAMAV_VERSION ": error: Can not stat file (%d): %s", errno,
+ 					strerror(errno));
+-			return 1;
++			return -1;
+ 		}
+-		pr_log_debug(DEBUG4, "ClamMinSize=%lu ClamMaxSize=%lu Filesize=%" PR_LU, clamd_minsize, clamd_maxsize, (pr_off_t) st.st_size);
++		pr_log_debug(DEBUG4, MOD_CLAMAV_VERSION ": ClamMinSize=%lu ClamMaxSize=%lu Filesize=%" PR_LU, clamd_minsize, clamd_maxsize, (pr_off_t) st.st_size);
+ 	}
+ 	
+ 	if (clamd_minsize > 0) {
+ 		/* test the minimum size */
+ 		if (st.st_size < clamd_minsize) {
+-			pr_log_debug(DEBUG4, "File is too small, skipping virus scan. min = %lu size = %" PR_LU, 
++			pr_log_debug(DEBUG4, MOD_CLAMAV_VERSION ": File is too small, skipping virus scan. min = %lu size = %" PR_LU, 
+ 					clamd_minsize, (pr_off_t) st.st_size);
+ 			return 0;
+ 		}
+@@ -404,24 +413,25 @@
+ 	if (clamd_maxsize > 0) {
+ 		/* test the maximum size */
+ 		if (st.st_size > clamd_maxsize) {
+-			pr_log_debug(DEBUG4, "File is too large, skipping virus scan. max = %lu size = %" PR_LU,
++			pr_log_debug(DEBUG4, MOD_CLAMAV_VERSION ": File is too large, skipping virus scan. max = %lu size = %" PR_LU,
+ 					clamd_maxsize, (pr_off_t) st.st_size);
+ 			return 0;
+ 		}
+ 	}
+ 	
+-	pr_log_debug(DEBUG4, 
+-			"Going to virus scan absolute filename = '%s' with relative filename = '%s'.", file, rel_file);
++	pr_log_debug(DEBUG4, MOD_CLAMAV_VERSION
++			": Going to virus scan absolute filename = '%s' with relative filename = '%s'.", abs_path, rel_path);
+ 	
+ 	clam_errno = 0;
+-	if (clamavd_scan(clamd_sockd, file, rel_file) > 0) {
+-		return 1;
++	if (clamavd_scan(clamd_sockd, abs_path, rel_path) > 0) {
++		errno = EPERM;
++		return -1;
+ 	}
+ 	
+ 	if (clam_errno == 0)
+-		pr_log_debug(DEBUG4, "No virus detected in filename = '%s'.", file);
++		pr_log_debug(DEBUG4, MOD_CLAMAV_VERSION ": No virus detected in filename = '%s'.", abs_path);
+ 	else
+-		pr_log_debug(DEBUG4, "Skipped virus scan due to errno = %d", clam_errno);
++		pr_log_debug(DEBUG4, MOD_CLAMAV_VERSION ": Skipped virus scan due to errno = %d", clam_errno);
+ 	
+ 	return 0;
+ }
+@@ -634,11 +644,17 @@
+  * Start FTP Session
+  */
+ static int clamav_sess_init(void) {
+-	
++	pr_fs_t *fs;
++
+ 	is_remote = 0; clamd_sockd = -1;
+ 	
+ 	pr_event_register(&clamav_module, "core.exit", clamav_shutdown, NULL);
+-		
++
++	fs = pr_register_fs(main_server->pool, "clamav", "/");
++	if (fs) {
++		fs->close = clamav_fsio_close;
++	}
++
+ 	return 0;
+ }
+ 
+@@ -661,6 +677,7 @@
+ 	NULL,
+ 	NULL, 				/* auth function table */
+ 	NULL, 				/* init function */
+-	clamav_sess_init	/* session init function */
++	clamav_sess_init,		/* session init function */
++        MOD_CLAMAV_VERSION
+ };
+ 
