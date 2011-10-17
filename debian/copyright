@@ -1,12 +1,10 @@
-Format: http://dep.debian.net/deps/dep5/
+Format: http://anonscm.debian.org/viewvc/dep/web/deps/dep5.mdwn?revision=202 
 Upstream-Name: mod_clamav
 Upstream-Contact: Joseph Benden <joe@thrallingpenguin.com>
 Source: http://www.thrallingpenguin.com/resources/mod_clamav.htm
 
 Files: *
 Copyright: 	2007-2010, Joseph Benden <joe@thrallingpenguin.com>
-License: GPL-2+
-
 License: GPL-2+
  This package is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
