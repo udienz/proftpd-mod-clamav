@@ -1,6 +1,7 @@
 #!/usr/bin/make -f
 # -*- makefile -*-
 
+export DEB_BUILD_HARDENING=1
 export DH_VERBOSE=1
 MODULE_NAME=mod_clamav
 DEBNAME=proftpd-mod-clamav

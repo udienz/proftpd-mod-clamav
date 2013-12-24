@@ -8,6 +8,7 @@ proftpd-mod-clamav (0.10+git2a82dccd1-1) UNRELEASED; urgency=low
   * d/watch: updated.
   * d/patches/series: Cleanup patch has been merged upstream.
   * d/rules: Use autotools-dev to update config.{sub,guess} for new arches.
+  * d/rules, d/control: enable hardening.
  
  -- Mahyuddin Susanto <udienz@gmail.com>  Tue, 24 Dec 2013 16:08:39 +0700
 
