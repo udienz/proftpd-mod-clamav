@@ -5,6 +5,7 @@ proftpd-mod-clamav (0.10-2) unstable; urgency=low
 
   [ Mahyuddin Susanto ]
   * d/copyright: Sync with dep5 rev 202
+  * d/watch: updated.
  
  -- Mahyuddin Susanto <udienz@ubuntu.com>  Mon, 17 Oct 2011 07:12:25 +0700
 
