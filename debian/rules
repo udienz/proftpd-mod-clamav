@@ -6,7 +6,7 @@ MODULE_NAME=mod_clamav
 DEBNAME=proftpd-mod-clamav
 
 %:
-	dh $@
+	dh $@ --with autotools_dev
 
 override_dh_auto_build:
 	DESTDIR=$(CURDIR)/debian/$(DEBNAME) prxs -c $(MODULE_NAME).c
@@ -22,4 +22,3 @@ override_dh_gencontrol:
 
 override_dh_autoclean:
 	DESTDIR=$(CURDIR)/debian/$(DEBNAME) prxs -d $(MODULE_NAME).c
-
